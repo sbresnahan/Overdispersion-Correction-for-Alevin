@@ -1,6 +1,6 @@
 # Processing Alevin Bootstraps for Seurat Integration
 
-This repository contains an **R workflow** and supporting code for processing **Salmon Alevin** bootstrap replicates to account for **technical uncertainty** before integrating single-cell RNA-seq datasets in **Seurat**. [See the workflow here](https://github.com/sbresnahan/Overdispersion-Correction-for-Alevin).
+This repository contains an **R workflow** and supporting code for processing **Salmon Alevin** bootstrap replicates to account for **technical uncertainty** before integrating single-cell RNA-seq datasets in **Seurat**. [See the workflow here](http://seantbresnahan.com/Overdispersion-Correction-for-Alevin).
 
 When quantifying single-cell transcript expression, **fragment assignment ambiguity** and **multi-mapping reads** can introduce **inferential variance** in estimated counts.  
 Salmon Alevin can produce **per-cell bootstrap replicates**, analogous to transcript-level bootstraps in bulk RNA-seq, which capture this uncertainty.  
