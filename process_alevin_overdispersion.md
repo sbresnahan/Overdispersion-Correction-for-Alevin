@@ -15,6 +15,114 @@ Accurate quantification of transcript expression from single-cell RNA-seq depend
 
 While overdispersion modeling is well established in bulk RNA-seq (e.g., `edgeR::catchSalmon()`), here we adapt the approach for single-cell data by treating **cells** as the unit over which bootstrap variance is estimated. The goal is to compute a moderated per-transcript overdispersion estimate and use it to **adjust counts** prior to downstream modeling with Seurat[@Butler2018Integrating], improving biological signal detection.[@baldoni_dividing_2024]
 
+## Procedure
+
+1. Fit a quasi-Poisson variance model to **bootstrap counts** per transcript.
+2. Estimate a transcript-specific **RTA overdispersion** \(\sigma_t^2>1\).
+3. Apply mild **empirical-Bayes moderation** and enforce a floor at 1.
+4. **Scale counts** by \(1/\tilde\sigma_t^2\): \(z_{ti}=y_{ti}/\tilde\sigma_t^2\).
+
+After scaling, the effective counts behave like standard NB data and empirical Bayes dispersion estimation regains its efficiency (e.g., BCV plots revert to the familiar decreasing trend with abundance).
+
+## Notation
+
+For transcript \(t\) in sample (or cell) \(i\):
+
+- \(y_{ti}\): (fractional) read count assigned by Salmon/Alevin  
+- \(N_i\): library size  
+- \(\pi_{ti}\): true underlying proportion (biological signal)  
+- \(\mu_{ti}=N_i\pi_{ti}\): mean count
+
+At transcript level, RTA inflates the technical variance beyond Poisson:
+
+\[
+\begin{aligned}
+\mathbb{E}(y_{ti}\mid \pi_{ti}) &= \mu_{ti},\\
+\mathrm{Var}(y_{ti}\mid \pi_{ti}) &= \sigma_t^2\,\mu_{ti},\quad \sigma_t^2>1.
+\end{aligned}
+\]
+
+Allowing biological variability across replicates, \(\pi_{ti}\) varies with \(\mathrm{Var}(\pi_{ti})\approx \pi_{0,ti}^2\,\phi_t\). Marginalizing yields
+
+\[
+\mathrm{Var}(y_{ti}) \;=\; \sigma_t^2\,\mu_{ti} \;+\; \phi_t\,\mu_{ti}^2 ,
+\]
+
+where \(\phi_t\) is the NB-like biological dispersion.
+
+## Estimating overdispersion from Alevin bootstraps
+
+Let \(u_{tib}\) be the **bootstrap** count for transcript \(t\), sample (or cell) \(i\), bootstrap \(b=1,\dots,B\). Let \(\hat\lambda_{ti}=\frac{1}{B}\sum_{b=1}^B u_{tib}\) be the bootstrap mean. Under the quasi-Poisson working model, a moment estimator for the *technical* RTA overdispersion is
+
+\[
+\hat\sigma_t^2 \;=\; \frac{1}{d_t}\sum_{i=1}^n \sum_{b=1}^B 
+\frac{\left(u_{tib}-\hat\lambda_{ti}\right)^2}{\hat\lambda_{ti}},
+\qquad d_t = n(B-1).
+\]
+
+Intuition: for each sample/cell, any bootstrap variability in excess of Poisson is attributed to transcript-specific RTA, and we **pool across samples/cells** to stabilize the estimate.
+
+**Our implementation (single-cell):** Instead of “samples” \(n\), we treat **cells** as the replicate unit and pool across cells *within a sample* so \(d_t=\text{(#cells)}\times(B-1)\). The code streams the feature×(cells×boot) matrix in **blocks**, sums squared residuals over bootstraps per cell, and accumulates per-transcript sums and degrees-of-freedom before shrinking.
+
+## Empirical-Bayes moderation and floor
+
+We apply light shrinkage toward a global prior using the median of \(\hat\sigma_t^2\) and the median \(F\) quantile, with \(d_0\approx 3\) prior df:
+
+\[
+\tilde\sigma_t^2 \;=\; \max\!\left(1,\; \frac{d_0\,\hat\sigma_0^2 + d_t\,\hat\sigma_t^2}{d_0+d_t}\right),
+\quad 
+\hat\sigma_0^2 \;=\; \max\!\left(1,\; \frac{\mathrm{median}(\hat\sigma_t^2)}{Q_2(F_{d_{\text{med}},d_0})}\right).
+\]
+
+This mirrors the moderation used by `catchSalmon`: a small prior df, median-based prior scale, and \(\tilde\sigma_t^2\ge 1\). In practice \(d_t\) is large, so shrinkage is mild.
+
+## Count scaling (correction)
+
+Define **scaled counts** \(z_{ti}\) by dividing out the moderated overdispersion:
+
+\[
+z_{ti} \;=\; \frac{y_{ti}}{\tilde\sigma_t^2}.
+\]
+
+Then \(\mathbb{E}(z_{ti})=\nu_{ti}=\mu_{ti}/\tilde\sigma_t^2\) and
+
+\[
+\mathrm{Var}(z_{ti}) \;=\; \nu_{ti} + \phi_t\,\nu_{ti}^2,
+\]
+
+i.e., the **NB mean–variance form** reappears, enabling standard dispersion modeling and GLMs. In the code, this is implemented by left-multiplying the counts by a diagonal matrix with entries \(1/\mathrm{OD}_t\).
+
+> **Why it helps.** After scaling, ambiguous isoforms no longer inflate tagwise dispersion; BCV-vs-abundance plots regain the canonical decreasing trend and downstream DE/Clustering behave as expected.
+
+## How this compares to `edgeR::catchSalmon()`
+
+**catchSalmon (bulk)** reads transcript counts and bootstraps per **sample**, computes per-transcript
+
+\[
+\hat\sigma_t^2 \;=\; \frac{1}{\sum_i (B-1)} \sum_i \sum_{b=1}^B
+\frac{(u_{tib} - \bar u_{ti})^2}{\bar u_{ti}},
+\]
+
+does the same **EB moderation** with \(d_0\approx 3\) and a **floor at 1**, and returns overdispersion together with counts so that analysis proceeds on **scaled counts** \(y_{ti}/\tilde\sigma_t^2\). Our procedure is **mathematically identical**, except that in single-cell mode we substitute **cells for samples** in the df and accumulation.
+
+# Practical details from the code
+
+- **Streaming + blocking.** We read `quants_boot_mat.gz` as a sparse matrix of shape (features × cells×B) and process cells in blocks to keep RAM bounded, summing bootstrap residuals per cell and accumulating per transcript.
+- **Degrees of freedom.** We track \(d_t\) as \((B-1)\times\) the number of contributing cells (non-zero mean) per transcript in each block and sum across blocks.
+- **Scaling step.** After estimating `OverDisp`, we compute `inv_od <- 1 / OverDisp` and form `counts_corr <- Diagonal(inv_od) %*% counts`, producing an assay `RNA_corr` for downstream work.
+
+## Expected diagnostics
+
+On pseudo-bulk (genes × samples) matrices, **BCV plots** (edgeR) should show:
+
+- **Before scaling:** inflated tagwise BCVs for ambiguous transcripts; trend distorted.  
+- **After scaling:** BCVs align with the usual abundance-dependent trend; dispersion estimation stabilizes.
+
+## Notes on scope and assumptions
+
+- The accuracy of \(\tilde\sigma_t^2\) hinges on good bootstrap behavior and annotation completeness; unannotated isoforms may bias both quantification and RTA estimates.
+- Paired-end and/or longer reads reduce ambiguity; long reads drive \(\sigma_t^2\) toward 1.
+
 ## Dataset for example analysis
 
 For this tutorial, we use scRNA-seq from **four healthy term placentas**,[@lu-culligan2021maternal] specifically: SRR14134833, SRR14134834, SRR14134836, and SRR15193608. Libraries consisting of approximately 4.8M cells across these four samples were prepared using the 10x Genomics Single Cell 3′ Reagent Kit v3 and sequenced on an Illumina NovaSeq platform.

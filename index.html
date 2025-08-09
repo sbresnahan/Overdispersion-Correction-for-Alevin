@@ -1524,6 +1524,167 @@ moderated per-transcript overdispersion estimate and use it to
 <strong>adjust counts</strong> prior to downstream modeling with
 Seurat<span class="citation"><sup>5</sup></span>, improving biological
 signal detection.<span class="citation"><sup>4</sup></span></p>
+<div id="procedure" class="section level2">
+<h2>Procedure</h2>
+<ol style="list-style-type: decimal">
+<li>Fit a quasi-Poisson variance model to <strong>bootstrap
+counts</strong> per transcript.</li>
+<li>Estimate a transcript-specific <strong>RTA overdispersion</strong>
+<span class="math inline">\(\sigma_t^2&gt;1\)</span>.</li>
+<li>Apply mild <strong>empirical-Bayes moderation</strong> and enforce a
+floor at 1.</li>
+<li><strong>Scale counts</strong> by <span class="math inline">\(1/\tilde\sigma_t^2\)</span>: <span class="math inline">\(z_{ti}=y_{ti}/\tilde\sigma_t^2\)</span>.</li>
+</ol>
+<p>After scaling, the effective counts behave like standard NB data and
+empirical Bayes dispersion estimation regains its efficiency (e.g., BCV
+plots revert to the familiar decreasing trend with abundance).</p>
+</div>
+<div id="notation" class="section level2">
+<h2>Notation</h2>
+<p>For transcript <span class="math inline">\(t\)</span> in sample (or
+cell) <span class="math inline">\(i\)</span>:</p>
+<ul>
+<li><span class="math inline">\(y_{ti}\)</span>: (fractional) read count
+assigned by Salmon/Alevin<br />
+</li>
+<li><span class="math inline">\(N_i\)</span>: library size<br />
+</li>
+<li><span class="math inline">\(\pi_{ti}\)</span>: true underlying
+proportion (biological signal)<br />
+</li>
+<li><span class="math inline">\(\mu_{ti}=N_i\pi_{ti}\)</span>: mean
+count</li>
+</ul>
+<p>At transcript level, RTA inflates the technical variance beyond
+Poisson:</p>
+<p><span class="math display">\[
+\begin{aligned}
+\mathbb{E}(y_{ti}\mid \pi_{ti}) &amp;= \mu_{ti},\\
+\mathrm{Var}(y_{ti}\mid \pi_{ti}) &amp;= \sigma_t^2\,\mu_{ti},\quad
+\sigma_t^2&gt;1.
+\end{aligned}
+\]</span></p>
+<p>Allowing biological variability across replicates, <span class="math inline">\(\pi_{ti}\)</span> varies with <span class="math inline">\(\mathrm{Var}(\pi_{ti})\approx
+\pi_{0,ti}^2\,\phi_t\)</span>. Marginalizing yields</p>
+<p><span class="math display">\[
+\mathrm{Var}(y_{ti}) \;=\; \sigma_t^2\,\mu_{ti} \;+\; \phi_t\,\mu_{ti}^2
+,
+\]</span></p>
+<p>where <span class="math inline">\(\phi_t\)</span> is the NB-like
+biological dispersion.</p>
+</div>
+<div id="estimating-overdispersion-from-alevin-bootstraps" class="section level2">
+<h2>Estimating overdispersion from Alevin bootstraps</h2>
+<p>Let <span class="math inline">\(u_{tib}\)</span> be the
+<strong>bootstrap</strong> count for transcript <span class="math inline">\(t\)</span>, sample (or cell) <span class="math inline">\(i\)</span>, bootstrap <span class="math inline">\(b=1,\dots,B\)</span>. Let <span class="math inline">\(\hat\lambda_{ti}=\frac{1}{B}\sum_{b=1}^B
+u_{tib}\)</span> be the bootstrap mean. Under the quasi-Poisson working
+model, a moment estimator for the <em>technical</em> RTA overdispersion
+is</p>
+<p><span class="math display">\[
+\hat\sigma_t^2 \;=\; \frac{1}{d_t}\sum_{i=1}^n \sum_{b=1}^B
+\frac{\left(u_{tib}-\hat\lambda_{ti}\right)^2}{\hat\lambda_{ti}},
+\qquad d_t = n(B-1).
+\]</span></p>
+<p>Intuition: for each sample/cell, any bootstrap variability in excess
+of Poisson is attributed to transcript-specific RTA, and we <strong>pool
+across samples/cells</strong> to stabilize the estimate.</p>
+<p><strong>Our implementation (single-cell):</strong> Instead of
+“samples” <span class="math inline">\(n\)</span>, we treat
+<strong>cells</strong> as the replicate unit and pool across cells
+<em>within a sample</em> so <span class="math inline">\(d_t=\text{(#cells)}\times(B-1)\)</span>. The code
+streams the feature×(cells×boot) matrix in <strong>blocks</strong>, sums
+squared residuals over bootstraps per cell, and accumulates
+per-transcript sums and degrees-of-freedom before shrinking.</p>
+</div>
+<div id="empirical-bayes-moderation-and-floor" class="section level2">
+<h2>Empirical-Bayes moderation and floor</h2>
+<p>We apply light shrinkage toward a global prior using the median of
+<span class="math inline">\(\hat\sigma_t^2\)</span> and the median <span class="math inline">\(F\)</span> quantile, with <span class="math inline">\(d_0\approx 3\)</span> prior df:</p>
+<p><span class="math display">\[
+\tilde\sigma_t^2 \;=\; \max\!\left(1,\; \frac{d_0\,\hat\sigma_0^2 +
+d_t\,\hat\sigma_t^2}{d_0+d_t}\right),
+\quad
+\hat\sigma_0^2 \;=\; \max\!\left(1,\;
+\frac{\mathrm{median}(\hat\sigma_t^2)}{Q_2(F_{d_{\text{med}},d_0})}\right).
+\]</span></p>
+<p>This mirrors the moderation used by <code>catchSalmon</code>: a small
+prior df, median-based prior scale, and <span class="math inline">\(\tilde\sigma_t^2\ge 1\)</span>. In practice <span class="math inline">\(d_t\)</span> is large, so shrinkage is mild.</p>
+</div>
+<div id="count-scaling-correction" class="section level2">
+<h2>Count scaling (correction)</h2>
+<p>Define <strong>scaled counts</strong> <span class="math inline">\(z_{ti}\)</span> by dividing out the moderated
+overdispersion:</p>
+<p><span class="math display">\[
+z_{ti} \;=\; \frac{y_{ti}}{\tilde\sigma_t^2}.
+\]</span></p>
+<p>Then <span class="math inline">\(\mathbb{E}(z_{ti})=\nu_{ti}=\mu_{ti}/\tilde\sigma_t^2\)</span>
+and</p>
+<p><span class="math display">\[
+\mathrm{Var}(z_{ti}) \;=\; \nu_{ti} + \phi_t\,\nu_{ti}^2,
+\]</span></p>
+<p>i.e., the <strong>NB mean–variance form</strong> reappears, enabling
+standard dispersion modeling and GLMs. In the code, this is implemented
+by left-multiplying the counts by a diagonal matrix with entries <span class="math inline">\(1/\mathrm{OD}_t\)</span>.</p>
+<blockquote>
+<p><strong>Why it helps.</strong> After scaling, ambiguous isoforms no
+longer inflate tagwise dispersion; BCV-vs-abundance plots regain the
+canonical decreasing trend and downstream DE/Clustering behave as
+expected.</p>
+</blockquote>
+</div>
+<div id="how-this-compares-to-edgercatchsalmon" class="section level2">
+<h2>How this compares to <code>edgeR::catchSalmon()</code></h2>
+<p><strong>catchSalmon (bulk)</strong> reads transcript counts and
+bootstraps per <strong>sample</strong>, computes per-transcript</p>
+<p><span class="math display">\[
+\hat\sigma_t^2 \;=\; \frac{1}{\sum_i (B-1)} \sum_i \sum_{b=1}^B
+\frac{(u_{tib} - \bar u_{ti})^2}{\bar u_{ti}},
+\]</span></p>
+<p>does the same <strong>EB moderation</strong> with <span class="math inline">\(d_0\approx 3\)</span> and a <strong>floor at
+1</strong>, and returns overdispersion together with counts so that
+analysis proceeds on <strong>scaled counts</strong> <span class="math inline">\(y_{ti}/\tilde\sigma_t^2\)</span>. Our procedure is
+<strong>mathematically identical</strong>, except that in single-cell
+mode we substitute <strong>cells for samples</strong> in the df and
+accumulation.</p>
+</div>
+</div>
+<div id="practical-details-from-the-code" class="section level1">
+<h1>Practical details from the code</h1>
+<ul>
+<li><strong>Streaming + blocking.</strong> We read
+<code>quants_boot_mat.gz</code> as a sparse matrix of shape (features ×
+cells×B) and process cells in blocks to keep RAM bounded, summing
+bootstrap residuals per cell and accumulating per transcript.</li>
+<li><strong>Degrees of freedom.</strong> We track <span class="math inline">\(d_t\)</span> as <span class="math inline">\((B-1)\times\)</span> the number of contributing
+cells (non-zero mean) per transcript in each block and sum across
+blocks.</li>
+<li><strong>Scaling step.</strong> After estimating
+<code>OverDisp</code>, we compute <code>inv_od &lt;- 1 / OverDisp</code>
+and form <code>counts_corr &lt;- Diagonal(inv_od) %*% counts</code>,
+producing an assay <code>RNA_corr</code> for downstream work.</li>
+</ul>
+<div id="expected-diagnostics" class="section level2">
+<h2>Expected diagnostics</h2>
+<p>On pseudo-bulk (genes × samples) matrices, <strong>BCV plots</strong>
+(edgeR) should show:</p>
+<ul>
+<li><strong>Before scaling:</strong> inflated tagwise BCVs for ambiguous
+transcripts; trend distorted.<br />
+</li>
+<li><strong>After scaling:</strong> BCVs align with the usual
+abundance-dependent trend; dispersion estimation stabilizes.</li>
+</ul>
+</div>
+<div id="notes-on-scope-and-assumptions" class="section level2">
+<h2>Notes on scope and assumptions</h2>
+<ul>
+<li>The accuracy of <span class="math inline">\(\tilde\sigma_t^2\)</span> hinges on good bootstrap
+behavior and annotation completeness; unannotated isoforms may bias both
+quantification and RTA estimates.</li>
+<li>Paired-end and/or longer reads reduce ambiguity; long reads drive
+<span class="math inline">\(\sigma_t^2\)</span> toward 1.</li>
+</ul>
+</div>
 <div id="dataset-for-example-analysis" class="section level2">
 <h2>Dataset for example analysis</h2>
 <p>For this tutorial, we use scRNA-seq from <strong>four healthy term
