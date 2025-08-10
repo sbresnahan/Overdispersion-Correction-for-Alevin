@@ -92,8 +92,6 @@ Then \(\mathbb{E}(z_{ti})=\nu_{ti}=\mu_{ti}/\tilde\sigma_t^2\) and
 
 i.e., the **NB mean–variance form** reappears, enabling standard dispersion modeling and GLMs. In the code, this is implemented by left-multiplying the counts by a diagonal matrix with entries \(1/\mathrm{OD}_t\).
 
-> **Why it helps.** After scaling, ambiguous isoforms no longer inflate tagwise dispersion; BCV-vs-abundance plots regain the canonical decreasing trend and downstream DE/Clustering behave as expected.
-
 ## How this compares to `edgeR::catchSalmon()`
 
 **catchSalmon (bulk)** reads transcript counts and bootstraps per **sample**, computes per-transcript
@@ -105,7 +103,7 @@ i.e., the **NB mean–variance form** reappears, enabling standard dispersion mo
 
 does the same **EB moderation** with \(d_0\approx 3\) and a **floor at 1**, and returns overdispersion together with counts so that analysis proceeds on **scaled counts** \(y_{ti}/\tilde\sigma_t^2\). Our procedure is **mathematically identical**, except that in single-cell mode we substitute **cells for samples** in the df and accumulation.
 
-# Practical details from the code
+## Practical details from the code
 
 - **Streaming + blocking.** We read `quants_boot_mat.gz` as a sparse matrix of shape (features × cells×B) and process cells in blocks to keep RAM bounded, summing bootstrap residuals per cell and accumulating per transcript.
 - **Degrees of freedom.** We track \(d_t\) as \((B-1)\times\) the number of contributing cells (non-zero mean) per transcript in each block and sum across blocks.
@@ -186,7 +184,7 @@ suppressPackageStartupMessages({
 # Helper: read an EDS as features x cells, with logging
 read_eds_gc <- function(path, n_feat, n_cells, label) {
   .log("[read] %s expecting features=%d cells=%d (file-native order)", label, n_feat, n_cells)
-  m <- eds::readEDS(path, numOftranscripts = n_feat, numOfOriginalCells = n_cells)  # returns features x cells
+  m <- eds::readEDS(path, numOfGenes = n_feat, numOfOriginalCells = n_cells)  # returns features x cells
   .log("[read] %s got %d x %d (features x cells)", label, nrow(m), ncol(m))
   if (nrow(m) != n_feat || ncol(m) != n_cells) {
     stop(sprintf("[read] %s dimension mismatch: expected %dx%d, got %dx%d",
@@ -223,7 +221,7 @@ compute_overdisp_from_boot_transcript_fast_par <- function(
   G <- length(transcripts); C <- length(cells)
   .log("[OD] Expecting boot with C=%d, G=%d, N=%d", C, G, n_boot)
   
-  boot <- eds::readEDS(f_boot, numOftranscripts = G, numOfOriginalCells = C * n_boot)
+  boot <- eds::readEDS(f_boot, numOfGenes = G, numOfOriginalCells = C * n_boot)
   if (!inherits(boot, "dgCMatrix")) boot <- as(boot, "dgCMatrix")
   .log("[OD] boot dims = %d x %d (transcripts x C*N)", nrow(boot), ncol(boot))
   
@@ -382,7 +380,7 @@ process_sample <- function(sample_id, base_dir, n_boot,
   
   # Sample label; choose default assay
   DefaultAssay(seu) <- "RNA_corr"
-  seu$sample <- sample_id
+  seu$sample_id <- sample_id
   
   .log("[%s] Done in %.1fs | %d transcripts x %d cells", sample_id,
        as.numeric(difftime(Sys.time(), t0, "secs")), nrow(seu), ncol(seu))

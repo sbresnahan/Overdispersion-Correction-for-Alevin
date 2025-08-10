@@ -6,7 +6,7 @@ When quantifying single-cell transcript expression, **fragment assignment ambigu
 Salmon Alevin can produce **per-cell bootstrap replicates**, analogous to transcript-level bootstraps in bulk RNA-seq, which capture this uncertainty.  
 If left uncorrected, this **overdispersion** can inflate variance estimates, biasing downstream analyses such as **differential expression**, **clustering**, and **trajectory inference**.
 
-Overdispersion modeling is widely used in bulk RNA-seq (e.g., `edgeR::catchSalmon()`), but here the approach is adapted for **single-cell** data by treating **cells**—rather than bulk samples—as the unit over which bootstrap variance is estimated.  
+Overdispersion modeling is widely used in bulk RNA-seq (e.g., `edgeR::catchSalmon()`), but here the approach is adapted for **single-cell** data by treating **cells**, rather than bulk samples, as the unit over which bootstrap variance is estimated.  
 The goal is to compute a **moderated per-transcript overdispersion estimate** and use it to **adjust counts** prior to downstream modeling, improving biological signal detection.
 
 ---

@@ -1625,12 +1625,6 @@ and</p>
 <p>i.e., the <strong>NB mean–variance form</strong> reappears, enabling
 standard dispersion modeling and GLMs. In the code, this is implemented
 by left-multiplying the counts by a diagonal matrix with entries <span class="math inline">\(1/\mathrm{OD}_t\)</span>.</p>
-<blockquote>
-<p><strong>Why it helps.</strong> After scaling, ambiguous isoforms no
-longer inflate tagwise dispersion; BCV-vs-abundance plots regain the
-canonical decreasing trend and downstream DE/Clustering behave as
-expected.</p>
-</blockquote>
 </div>
 <div id="how-this-compares-to-edgercatchsalmon" class="section level2">
 <h2>How this compares to <code>edgeR::catchSalmon()</code></h2>
@@ -1647,9 +1641,8 @@ analysis proceeds on <strong>scaled counts</strong> <span class="math inline">\(
 mode we substitute <strong>cells for samples</strong> in the df and
 accumulation.</p>
 </div>
-</div>
-<div id="practical-details-from-the-code" class="section level1">
-<h1>Practical details from the code</h1>
+<div id="practical-details-from-the-code" class="section level2">
+<h2>Practical details from the code</h2>
 <ul>
 <li><strong>Streaming + blocking.</strong> We read
 <code>quants_boot_mat.gz</code> as a sparse matrix of shape (features ×
@@ -1663,6 +1656,7 @@ blocks.</li>
 and form <code>counts_corr &lt;- Diagonal(inv_od) %*% counts</code>,
 producing an assay <code>RNA_corr</code> for downstream work.</li>
 </ul>
+</div>
 <div id="expected-diagnostics" class="section level2">
 <h2>Expected diagnostics</h2>
 <p>On pseudo-bulk (genes × samples) matrices, <strong>BCV plots</strong>
@@ -1763,7 +1757,7 @@ matrices are efficiently read with <code>eds::readEDS()</code>.</p>
 <pre class="r"><code># Helper: read an EDS as features x cells, with logging
 read_eds_gc &lt;- function(path, n_feat, n_cells, label) {
   .log(&quot;[read] %s expecting features=%d cells=%d (file-native order)&quot;, label, n_feat, n_cells)
-  m &lt;- eds::readEDS(path, numOftranscripts = n_feat, numOfOriginalCells = n_cells)  # returns features x cells
+  m &lt;- eds::readEDS(path, numOfGenes = n_feat, numOfOriginalCells = n_cells)  # returns features x cells
   .log(&quot;[read] %s got %d x %d (features x cells)&quot;, label, nrow(m), ncol(m))
   if (nrow(m) != n_feat || ncol(m) != n_cells) {
     stop(sprintf(&quot;[read] %s dimension mismatch: expected %dx%d, got %dx%d&quot;,
@@ -1799,7 +1793,7 @@ approaches.</p>
   G &lt;- length(transcripts); C &lt;- length(cells)
   .log(&quot;[OD] Expecting boot with C=%d, G=%d, N=%d&quot;, C, G, n_boot)
   
-  boot &lt;- eds::readEDS(f_boot, numOftranscripts = G, numOfOriginalCells = C * n_boot)
+  boot &lt;- eds::readEDS(f_boot, numOfGenes = G, numOfOriginalCells = C * n_boot)
   if (!inherits(boot, &quot;dgCMatrix&quot;)) boot &lt;- as(boot, &quot;dgCMatrix&quot;)
   .log(&quot;[OD] boot dims = %d x %d (transcripts x C*N)&quot;, nrow(boot), ncol(boot))
   
@@ -1957,7 +1951,7 @@ each assay’s <code>Misc(&quot;feature_meta&quot;)</code>.</p>
   
   # Sample label; choose default assay
   DefaultAssay(seu) &lt;- &quot;RNA_corr&quot;
-  seu$sample &lt;- sample_id
+  seu$sample_id &lt;- sample_id
   
   .log(&quot;[%s] Done in %.1fs | %d transcripts x %d cells&quot;, sample_id,
        as.numeric(difftime(Sys.time(), t0, &quot;secs&quot;)), nrow(seu), ncol(seu))
